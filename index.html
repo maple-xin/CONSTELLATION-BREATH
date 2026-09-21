@@ -28,7 +28,7 @@
     [294,268],[448,246],[366,180]
   ];
   let cnv,stars=[],path=[0],holding=false,pointerId=null;
-  let px=360,py=650,pressStart=0,holdGlow=0,dragging=false;
+  let px=360,py=650,lastPx=360,lastPy=650,pressStart=0,holdGlow=0,dragging=false;
   let audioCtx=null,masterGain=null,lastSound=0,grain=[],flash=0,unlocked=false,guidePulse=0;
 
   function setup(){
@@ -43,16 +43,17 @@
     const el=cnv.elt;
     el.addEventListener('pointerdown',e=>{
       e.preventDefault();const q=toCanvas(e);px=q.x;py=q.y;
-      const current=path[path.length-1],hit=nearestStar(px,py,path.length===1?92:62);
+      const current=path[path.length-1],hit=nearestStar(px,py,path.length===1?140:92);
       if(hit!==current){guidePulse=1;return;}
       holding=true;dragging=false;pointerId=e.pointerId;pressStart=millis();holdGlow=0;
+      lastPx=px;lastPy=py;
       el.setPointerCapture?.(e.pointerId);ensureAudio();softPulse(current);
     },{passive:false});
     el.addEventListener('pointermove',e=>{
       if(!holding||e.pointerId!==pointerId)return;e.preventDefault();
-      const q=toCanvas(e);px=q.x;py=q.y;
+      const q=toCanvas(e);lastPx=px;lastPy=py;px=q.x;py=q.y;
       if(dist(px,py,stars[path[path.length-1]].x,stars[path[path.length-1]].y)>22)dragging=true;
-      if(dragging)checkCrossing();
+      if(dragging)checkCrossing(lastPx,lastPy,px,py);
     },{passive:false});
     const end=e=>{if(e.pointerId!==pointerId)return;holding=false;dragging=false;pointerId=null;holdGlow=0;};
     el.addEventListener('pointerup',end,{passive:false});el.addEventListener('pointercancel',end,{passive:false});
@@ -60,14 +61,29 @@
 
   function toCanvas(e){const r=cnv.elt.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
   function nearestStar(x,y,r){let id=-1,b=r;for(let i=0;i<stars.length;i++){const d=dist(x,y,stars[i].x,stars[i].y);if(d<b){b=d;id=i;}}return id;}
-  function checkCrossing(){
+  function pointOnStroke(s,x1,y1,x2,y2){
+    const dx=x2-x1,dy=y2-y1,l2=dx*dx+dy*dy;
+    const t=l2?constrain(((s.x-x1)*dx+(s.y-y1)*dy)/l2,0,1):0;
+    const x=x1+dx*t,y=y1+dy*t;
+    return{d:dist(s.x,s.y,x,y),t};
+  }
+  function checkCrossing(x1,y1,x2,y2){
     const curr=path[path.length-1],prev=path.length>1?path[path.length-2]:-1;
-    if(prev>=0&&dist(px,py,stars[prev].x,stars[prev].y)<45){
+    const undo=prev>=0?pointOnStroke(stars[prev],x1,y1,x2,y2):null;
+    if(undo&&undo.d<66&&undo.t>.04){
       const removed=path.pop();px=stars[prev].x;py=stars[prev].y;playUndo(removed);flash=-1;return;
     }
-    const hit=nearestStar(px,py,43);
-    if(hit<0||hit===curr||path.includes(hit))return;
-    const a=stars[curr],b=stars[hit];if(dist(a.x,a.y,b.x,b.y)>260)return;
+    const a=stars[curr];
+    const candidates=[];
+    for(let i=0;i<stars.length;i++){
+      if(i===curr||path.includes(i)||dist(a.x,a.y,stars[i].x,stars[i].y)>330)continue;
+      const cross=pointOnStroke(stars[i],x1,y1,x2,y2);
+      const finger=dist(x2,y2,stars[i].x,stars[i].y);
+      if(cross.d<68||finger<86)candidates.push({id:i,t:cross.t,d:min(cross.d,finger)});
+    }
+    if(!candidates.length)return;
+    candidates.sort((u,v)=>u.t-v.t||u.d-v.d);
+    const hit=candidates[0].id;
     path.push(hit);playConnect(hit,path.length-1);flash=1;
     if(navigator.vibrate)navigator.vibrate(12);
   }
@@ -92,10 +108,13 @@
     if(path.length<2)return;
     drawingContext.save();drawingContext.shadowColor='rgba(232,171,75,.72)';drawingContext.shadowBlur=15;
     noFill();stroke(...GOLD,245);strokeWeight(4.2);
-    beginShape();for(const id of path)curveVertex(stars[id].x,stars[id].y);if(path.length===2){const a=stars[path[0]];curveVertex(a.x,a.y);}endShape();
+    for(let i=1;i<path.length;i++){
+      const a=stars[path[i-1]],b=stars[path[i]];
+      line(a.x,a.y,b.x,b.y);
+    }
     drawingContext.restore();
     for(let i=1;i<path.length;i++){
-      const a=stars[path[i-1]],b=stars[path[i]];stroke(255,242,202,120);strokeWeight(.65);line(a.x,a.y,b.x,b.y);
+      const a=stars[path[i-1]],b=stars[path[i]];stroke(255,247,215,220);strokeWeight(1.25);line(a.x,a.y,b.x,b.y);
     }
   }
   function drawStars(){
@@ -103,12 +122,12 @@
     for(let i=0;i<stars.length;i++){
       const s=stars[i],connected=path.includes(i),isActive=i===active;
       const breath=.5+.5*sin(t*1.5+s.seed);
-      let alpha=connected?235:58,size=connected?8.2:4.2;
+      let alpha=connected?235:92,size=connected?9.5:7;
       if(i===0&&path.length===1){alpha=205+breath*50;size=11+breath*4.5;}
       if(isActive){alpha=240;size=max(size,10+breath*3);}
       if(holding&&isActive){holdGlow=min(1,(millis()-pressStart)/900);alpha=255;size+=holdGlow*10;}
-      if(!connected&&holding){const d=dist(px,py,s.x,s.y);if(d<155){alpha=map(d,0,155,210,65);size=map(d,0,155,8,4.2);}}
-      drawingContext.save();drawingContext.shadowColor=`rgba(234,174,80,${connected?.55:.12})`;drawingContext.shadowBlur=connected?16:5;
+      if(!connected&&holding){const d=dist(px,py,s.x,s.y);if(d<175){alpha=map(d,0,175,235,92);size=map(d,0,175,13,7);}}
+      drawingContext.save();drawingContext.shadowColor=`rgba(234,174,80,${connected?.55:.2})`;drawingContext.shadowBlur=connected?16:8;
       noStroke();fill(...(connected?GLOW:INK),alpha);circle(s.x,s.y,size);
       if(connected){fill(255,246,216,210);circle(s.x,s.y,max(1.5,size*.28));}
       drawingContext.restore();
